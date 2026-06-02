@@ -1,0 +1,150 @@
+#!/bin/bash
+
+CONFIG_DIR="/home/ocean/.claude/configs"
+LOG="/home/ocean/Desktop/openclaw-logs/session.log"
+
+cd "/home/ocean/Desktop/openclaw-logs"
+
+BOOT_TIME=$(uptime -s 2>/dev/null || who -b 2>/dev/null | awk '{print $3, $4}')
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
+}
+
+# ── 管理 Session ──────────────────────────────────────
+manage_sessions() {
+    ALL=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^claude")
+    if [ -z "$ALL" ]; then
+        echo "目前沒有任何 claude session。"
+        return
+    fi
+
+    echo ""
+    echo "📋 目前所有 Claude sessions："
+    i=1
+    while IFS= read -r s; do
+        echo "  $i) $s"
+        i=$((i+1))
+    done <<< "$ALL"
+    echo "  A) 全部清除"
+    echo "  Q) 返回"
+    echo ""
+    read -p "選擇要關閉的 session（數字/A/Q）：" CHOICE
+
+    case "$CHOICE" in
+        [Aa])
+            while IFS= read -r s; do
+                tmux kill-session -t "$s" 2>/dev/null
+                log "KILLED  $s (手動清除, boot: $BOOT_TIME)"
+                echo "🗑️  已關閉 $s"
+            done <<< "$ALL"
+            ;;
+        [Qq]) return ;;
+        *)
+            TARGET=$(echo "$ALL" | sed -n "${CHOICE}p")
+            if [ -n "$TARGET" ]; then
+                tmux kill-session -t "$TARGET" 2>/dev/null
+                log "KILLED  $TARGET (手動清除, boot: $BOOT_TIME)"
+                echo "🗑️  已關閉 $TARGET"
+            else
+                echo "無效選擇"
+            fi
+            ;;
+    esac
+}
+
+# ── 主選單 ────────────────────────────────────────────
+echo "請選擇要切換的 Claude 版本："
+options=("官方訂閱版 (Official)" "DeepSeek 版 (v4)" "🗑️  管理 Session" "取消退出")
+select opt in "${options[@]}"
+do
+    case $opt in
+        "官方訂閱版 (Official)")
+            PREFIX="claude-official"
+            SETTINGS_FILE="/home/ocean/.claude/settings-official.json"
+            cp "$CONFIG_DIR/official.json" "$SETTINGS_FILE"
+            echo "✅ 已切換至【官方訂閱版】"
+            break
+            ;;
+        "DeepSeek 版 (v4)")
+            PREFIX="claude-deepseek"
+            SETTINGS_FILE="/home/ocean/.claude/settings-deepseek.json"
+            cp "$CONFIG_DIR/deepseek.json" "$SETTINGS_FILE"
+            echo "✅ 已切換至【DeepSeek 版 (v4)】"
+            break
+            ;;
+        "🗑️  管理 Session")
+            manage_sessions
+            exit 0
+            ;;
+        "取消退出")
+            exit 0
+            ;;
+        *) echo "無效的選擇 $REPLY";;
+    esac
+done
+
+# ── 列出此版本現有 sessions ───────────────────────────
+EXISTING=$(tmux list-sessions -F "#{session_name}" 2>/dev/null | grep "^${PREFIX}")
+
+if [ -n "$EXISTING" ]; then
+    echo ""
+    echo "📋 已有執行中的 session："
+    i=1
+    while IFS= read -r s; do
+        echo "  $i) $s"
+        i=$((i+1))
+    done <<< "$EXISTING"
+    echo "  N) 開新的"
+    echo ""
+    read -p "選擇 (數字 attach / N 新開)：" CHOICE
+
+    if [[ "$CHOICE" =~ ^[Nn]$ ]]; then
+        :
+    else
+        SESSION=$(echo "$EXISTING" | sed -n "${CHOICE}p")
+        if [ -n "$SESSION" ]; then
+            log "ATTACH  $SESSION (boot: $BOOT_TIME)"
+            echo "🔗 Attach 到 $SESSION ..."
+            tmux attach -t "$SESSION"
+            exit 0
+        else
+            echo "無效選擇，開新的..."
+        fi
+    fi
+fi
+
+# ── 開新 session ──────────────────────────────────────
+N=1
+while tmux has-session -t "${PREFIX}-${N}" 2>/dev/null; do
+    N=$((N+1))
+done
+SESSION="${PREFIX}-${N}"
+
+echo ""
+for i in {3..1}; do
+    echo -ne "🚀 即將在 $i 秒後啟動 $SESSION... \r"
+    sleep 1
+done
+echo -e "\n🔥 正在啟動 Claude Code..."
+
+TMPSCRIPT=$(mktemp /tmp/claude-session-XXXX.sh)
+cat > "$TMPSCRIPT" << EOF
+#!/bin/bash
+echo "[\$(date '+%Y-%m-%d %H:%M:%S')] START   $SESSION (boot: $BOOT_TIME)" >> "$LOG"
+CLAUDE_CODE_WORKFLOWS=1 CLAUDE_SETTINGS_FILE="$SETTINGS_FILE" claude --dangerously-skip-permissions
+EXIT_CODE=\$?
+echo "[\$(date '+%Y-%m-%d %H:%M:%S')] END     $SESSION (exit: \$EXIT_CODE, boot: $BOOT_TIME)" >> "$LOG"
+rm -f "$TMPSCRIPT"
+EOF
+chmod +x "$TMPSCRIPT"
+
+tmux new-session -d -s "$SESSION" "bash $TMPSCRIPT"
+log "CREATED $SESSION (boot: $BOOT_TIME)"
+
+echo "✅ 已啟動 tmux session: $SESSION"
+echo "💡 離開按 Ctrl+B 再按 D（不會關掉 Claude）"
+echo ""
+echo "📋 目前所有 sessions："
+tmux list-sessions 2>/dev/null
+tmux attach -t "$SESSION"
