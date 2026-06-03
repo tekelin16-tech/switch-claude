@@ -121,10 +121,21 @@ if [ -n "$EXISTING" ]; then
     done <<< "$EXISTING"
     echo "  N) 開新的"
     echo ""
-    read -p "選擇 (數字 attach / N 新開)：" CHOICE
+    read -p "選擇 (數字 attach / d+數字 刪除 / N 新開)：" CHOICE
 
     if [[ "$CHOICE" =~ ^[Nn]$ ]]; then
         :
+    elif [[ "$CHOICE" =~ ^[dD]([0-9]+)$ ]]; then
+        NUM="${BASH_REMATCH[1]}"
+        TARGET=$(echo "$EXISTING" | sed -n "${NUM}p")
+        if [ -n "$TARGET" ]; then
+            tmux kill-session -t "$TARGET" 2>/dev/null
+            log "KILLED  $TARGET (手動刪除, boot: $BOOT_TIME)"
+            echo "🗑️  已關閉 $TARGET"
+        else
+            echo "無效選擇"
+        fi
+        exit 0
     else
         SESSION=$(echo "$EXISTING" | sed -n "${CHOICE}p")
         if [ -n "$SESSION" ]; then
