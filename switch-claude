@@ -26,12 +26,36 @@ manage_sessions() {
         echo "  $i) $s"
         i=$((i+1))
     done <<< "$ALL"
+    echo "  R) 重新命名"
     echo "  A) 全部清除"
     echo "  Q) 返回"
     echo ""
-    read -p "選擇要關閉的 session（數字/A/Q）：" CHOICE
+    read -p "選擇要關閉的 session（數字/R/A/Q）：" CHOICE
 
     case "$CHOICE" in
+        [Rr])
+            echo ""
+            read -p "輸入要重新命名的 session 編號：" RNUM
+            OLD=$(echo "$ALL" | sed -n "${RNUM}p")
+            if [ -z "$OLD" ]; then
+                echo "無效選擇"
+                return
+            fi
+            read -p "新名稱（會自動加上 claude- 前綴，例如輸入 work → claude-work）：" NEWNAME
+            NEWNAME=$(echo "$NEWNAME" | tr ' ' '-' | tr -cd '[:alnum:]-_')
+            if [ -z "$NEWNAME" ]; then
+                echo "名稱不能為空"
+                return
+            fi
+            NEWNAME="claude-${NEWNAME}"
+            if tmux has-session -t "$NEWNAME" 2>/dev/null; then
+                echo "⚠️  名稱 $NEWNAME 已存在"
+                return
+            fi
+            tmux rename-session -t "$OLD" "$NEWNAME"
+            log "RENAME  $OLD -> $NEWNAME (boot: $BOOT_TIME)"
+            echo "✅ 已重新命名：$OLD → $NEWNAME"
+            ;;
         [Aa])
             while IFS= read -r s; do
                 tmux kill-session -t "$s" 2>/dev/null
@@ -119,9 +143,23 @@ N=1
 while tmux has-session -t "${PREFIX}-${N}" 2>/dev/null; do
     N=$((N+1))
 done
-SESSION="${PREFIX}-${N}"
+DEFAULT_SESSION="${PREFIX}-${N}"
 
 echo ""
+read -p "Session 名稱（留空用預設 ${DEFAULT_SESSION}）：" CUSTOM_SUFFIX
+CUSTOM_SUFFIX=$(echo "$CUSTOM_SUFFIX" | tr ' ' '-' | tr -cd '[:alnum:]-_')
+if [ -n "$CUSTOM_SUFFIX" ]; then
+    CANDIDATE="${PREFIX}-${CUSTOM_SUFFIX}"
+    if tmux has-session -t "$CANDIDATE" 2>/dev/null; then
+        echo "⚠️  名稱 $CANDIDATE 已存在，改用預設 $DEFAULT_SESSION"
+        SESSION="$DEFAULT_SESSION"
+    else
+        SESSION="$CANDIDATE"
+    fi
+else
+    SESSION="$DEFAULT_SESSION"
+fi
+
 for i in {3..1}; do
     echo -ne "🚀 即將在 $i 秒後啟動 $SESSION... \r"
     sleep 1
